@@ -19,12 +19,20 @@ df['director'] = df['director'].fillna("Unknown")
 # 숫자 데이터 결측치는 평균/중앙값으로 채우기
 df['release_year'] = df['release_year'].fillna(df['release_year'].median())
 
-# 예: release_year에서 1900~2025 범위 벗어나면 제거
-df = df[(df['release_year'] >= 1900) & (df['release_year'] <= 2025)]
+# figure와 subplot 생성: 1행 2열
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-# boxplot으로 시각화 확인
-import matplotlib.pyplot as plt
-plt.boxplot(df['release_year'])
+# 1️⃣ 제거 전
+axes[0].boxplot(df['release_year'])
+axes[0].set_title('Before Removing Outliers')
+
+# 2️⃣ 제거 후
+# 이상치 제거
+df_filtered = df[(df['release_year'] >= 1950) & (df['release_year'] <= 2025)]
+axes[1].boxplot(df_filtered['release_year'])
+axes[1].set_title('After Removing Outliers')
+
+plt.tight_layout()
 plt.show()
 
 # 예: 날짜 컬럼에서 연도/월 분리
