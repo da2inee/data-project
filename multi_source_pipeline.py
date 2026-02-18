@@ -11,6 +11,7 @@ from datetime import datetime
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
 import requests
+import matplotlib.pyplot as plt
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -148,7 +149,46 @@ class MultiSourcePipeline:
         except Exception as e:
             logger.error(f"분석 실패: {e}")
 
+    def run_and_visualize(self):
+        """데이터 수집 후 즉시 시각화 분석"""
+        logger.info("🚀 데이터 수집 및 분석 시작")
+        
+        # 데이터 수집
+        weather = self.extract_weather()
+        exchange = self.extract_exchange_rate()
+        public = self.extract_public_data()
+
+        # 시각화를 위한 데이터프레임 생성
+        # (실제 운영 시에는 DB에서 과거 데이터를 불러와서 그립니다)
+        data = {
+            'Category': ['Temp (°C)', 'USD/KRW (1/100)', 'PM10'],
+            'Value': [
+                weather.get('temperature', 0),
+                exchange.get('krw_rate', 0) / 100, # 수치 맞춤을 위해 100으로 나눔
+                public.get('pm10', 0)
+            ]
+        }
+        df_plot = pd.DataFrame(data)
+
+        # --- Matplotlib 시각화 영역 ---
+        plt.figure(figsize=(10, 6))
+        
+        # 막대 그래프 그리기
+        bars = plt.bar(df_plot['Category'], df_plot['Value'], color=['orange', 'skyblue', 'green'])
+        
+        # 수치 표시
+        for bar in bars:
+            yval = bar.get_height()
+            plt.text(bar.get_x() + bar.get_width()/2, yval + 0.5, yval, ha='center', va='bottom')
+
+        plt.title("Real-time Data Snapshot")
+        plt.ylabel("Value")
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        
+        logger.info("📊 그래프를 화면에 띄웁니다...")
+        plt.show() # 이 코드가 실행되면 팝업 창이 뜹니다.
+
 
 if __name__ == "__main__":
     pipeline = MultiSourcePipeline()
-    pipeline.run_multi_pipeline()
+    pipeline.run_and_visualize()  # 시각화 포함 버전
