@@ -188,7 +188,190 @@ class MultiSourcePipeline:
         logger.info("📊 그래프를 화면에 띄웁니다...")
         plt.show() # 이 코드가 실행되면 팝업 창이 뜹니다.
 
+    def analyze_trends(self, period='daily'):
+        """
+        DB에 저장된 데이터의 트렌드 분석
+        period: 'daily', 'weekly', 'monthly'
+        """
+        if not self.engine:
+            logger.error("DB 연결 실패")
+            return
+        
+        logger.info(f"📈 {period.upper()} 트렌드 분석 시작")
+        
+        try:
+            # 1. 날씨 트렌드
+            df_weather = pd.read_sql(
+                "SELECT * FROM weather_data ORDER BY collected_at",
+                self.engine
+            )
+            
+            # 2. 환율 트렌드
+            df_exchange = pd.read_sql(
+                "SELECT * FROM exchange_rate ORDER BY collected_at",
+                self.engine
+            )
+            
+            # 3. 공공 데이터 트렌드
+            df_public = pd.read_sql(
+                "SELECT * FROM public_data ORDER BY collected_at",
+                self.engine
+            )
+            
+            if df_weather.empty and df_exchange.empty and df_public.empty:
+                logger.warning("⚠️ 분석할 데이터가 없습니다. 먼저 데이터를 수집해주세요.")
+                return
+            
+            # 날짜 형식 변환
+            for df in [df_weather, df_exchange, df_public]:
+                if not df.empty and 'collected_at' in df.columns:
+                    df['collected_at'] = pd.to_datetime(df['collected_at'])
+                    df['date'] = df['collected_at'].dt.date
+                    df['hour'] = df['collected_at'].dt.hour
+            
+            # 기간별 그룹화
+            if period == 'daily':
+                group_by = 'date'
+                title_suffix = "일별"
+            elif period == 'weekly':
+                group_by = 'week'
+                for df in [df_weather, df_exchange, df_public]:
+                    if not df.empty:
+                        df['week'] = df['collected_at'].dt.isocalendar().week
+                title_suffix = "주별"
+            else:  # monthly
+                group_by = 'month'
+                for df in [df_weather, df_exchange, df_public]:
+                    if not df.empty:
+                        df['month'] = df['collected_at'].dt.to_period('M')
+                title_suffix = "월별"
+            
+            # 그래프 생성 (3x1 레이아웃)
+            fig, axes = plt.subplots(3, 1, figsize=(12, 10))
+            fig.suptitle(f'📊 {title_suffix} 데이터 트렌드 분석', fontsize=16, y=0.995)
+            
+            # 1. 날씨 트렌드
+            if not df_weather.empty:
+                weather_trend = df_weather.groupby(group_by).agg({
+                    'temperature': 'mean',
+                    'windspeed': 'mean'
+                }).reset_index()
+                
+                ax1 = axes[0]
+                ax1_twin = ax1.twinx()
+                
+                line1 = ax1.plot(weather_trend[group_by], weather_trend['temperature'], 
+                                'o-', color='orangered', linewidth=2, label='Temperature (°C)')
+                line2 = ax1_twin.plot(weather_trend[group_by], weather_trend['windspeed'], 
+                                     's-', color='skyblue', linewidth=2, label='Wind Speed (km/h)')
+                
+                ax1.set_ylabel('Temperature (°C)', color='orangered')
+                ax1_twin.set_ylabel('Wind Speed (km/h)', color='skyblue')
+                ax1.set_title(f'🌡️ {title_suffix} 날씨 변화')
+                ax1.grid(True, alpha=0.3)
+                ax1.tick_params(axis='y', labelcolor='orangered')
+                ax1_twin.tick_params(axis='y', labelcolor='skyblue')
+                
+                # 범례 통합
+                lines = line1 + line2
+                labels = [l.get_label() for l in lines]
+                ax1.legend(lines, labels, loc='upper left')
+            else:
+                axes[0].text(0.5, 0.5, '날씨 데이터 없음', ha='center', va='center')
+                axes[0].set_title('🌡️ 날씨 트렌드')
+            
+            # 2. 환율 트렌드
+            if not df_exchange.empty:
+                exchange_trend = df_exchange.groupby(group_by).agg({
+                    'krw_rate': 'mean',
+                    'eur_rate': 'mean',
+                    'jpy_rate': 'mean'
+                }).reset_index()
+                
+                ax2 = axes[1]
+                ax2.plot(exchange_trend[group_by], exchange_trend['krw_rate'], 
+                        'o-', label='USD/KRW', linewidth=2, color='green')
+                
+                ax2.set_ylabel('KRW per USD')
+                ax2.set_title(f'💱 {title_suffix} 환율 변화 (USD/KRW)')
+                ax2.grid(True, alpha=0.3)
+                ax2.legend()
+                
+                # 최고/최저 표시
+                max_idx = exchange_trend['krw_rate'].idxmax()
+                min_idx = exchange_trend['krw_rate'].idxmin()
+                ax2.plot(exchange_trend.loc[max_idx, group_by], 
+                        exchange_trend.loc[max_idx, 'krw_rate'], 
+                        'r^', markersize=10, label=f'최고: {exchange_trend.loc[max_idx, "krw_rate"]:.2f}')
+                ax2.plot(exchange_trend.loc[min_idx, group_by], 
+                        exchange_trend.loc[min_idx, 'krw_rate'], 
+                        'bv', markersize=10, label=f'최저: {exchange_trend.loc[min_idx, "krw_rate"]:.2f}')
+                ax2.legend()
+            else:
+                axes[1].text(0.5, 0.5, '환율 데이터 없음', ha='center', va='center')
+                axes[1].set_title('💱 환율 트렌드')
+            
+            # 3. 공공 데이터 트렌드 (PM10)
+            if not df_public.empty:
+                public_trend = df_public.groupby(group_by).agg({
+                    'pm10': 'mean',
+                    'pm25': 'mean'
+                }).reset_index()
+                
+                ax3 = axes[2]
+                ax3.fill_between(range(len(public_trend)), 0, public_trend['pm10'], 
+                                alpha=0.3, color='purple')
+                ax3.plot(public_trend[group_by], public_trend['pm10'], 
+                        'o-', label='PM10', linewidth=2, color='purple')
+                ax3.plot(public_trend[group_by], public_trend['pm25'], 
+                        's-', label='PM2.5', linewidth=2, color='orange')
+                
+                # 미세먼지 기준선
+                ax3.axhline(y=80, color='red', linestyle='--', alpha=0.5, label='나쁨 기준 (80)')
+                ax3.axhline(y=30, color='green', linestyle='--', alpha=0.5, label='좋음 기준 (30)')
+                
+                ax3.set_ylabel('미세먼지 농도 (μg/m³)')
+                ax3.set_title(f'🏢 {title_suffix} 미세먼지 변화')
+                ax3.grid(True, alpha=0.3)
+                ax3.legend()
+            else:
+                axes[2].text(0.5, 0.5, '공공 데이터 없음', ha='center', va='center')
+                axes[2].set_title('🏢 미세먼지 트렌드')
+            
+            # x축 레이블 회전
+            for ax in axes:
+                ax.tick_params(axis='x', rotation=45)
+            
+            plt.tight_layout()
+            
+            # 통계 출력
+            logger.info(f"\n📊 {title_suffix} 통계 요약:")
+            if not df_weather.empty:
+                logger.info(f"  🌡️ 평균 온도: {df_weather['temperature'].mean():.1f}°C")
+                logger.info(f"  🌡️ 최고/최저: {df_weather['temperature'].max():.1f}°C / {df_weather['temperature'].min():.1f}°C")
+            if not df_exchange.empty:
+                logger.info(f"  💱 평균 환율: {df_exchange['krw_rate'].mean():.2f} KRW")
+                logger.info(f"  💱 최고/최저: {df_exchange['krw_rate'].max():.2f} / {df_exchange['krw_rate'].min():.2f}")
+            if not df_public.empty:
+                logger.info(f"  🏢 평균 PM10: {df_public['pm10'].mean():.1f}")
+            
+            logger.info("📊 트렌드 그래프를 화면에 띄웁니다...")
+            plt.show()
+            
+        except Exception as e:
+            logger.error(f"트렌드 분석 실패: {e}")
+            import traceback
+            traceback.print_exc()
+
 
 if __name__ == "__main__":
     pipeline = MultiSourcePipeline()
-    pipeline.run_and_visualize()  # 시각화 포함 버전
+    
+    # 옵션 1: 데이터 수집 + 실시간 시각화
+    # pipeline.run_and_visualize()
+    
+    # 옵션 2: 데이터 수집만
+    # pipeline.run_multi_pipeline()
+    
+    # 옵션 3: 트렌드 분석 (DB에 쌓인 데이터 분석)
+    pipeline.analyze_trends(period='daily')  # 'daily', 'weekly', 'monthly'
